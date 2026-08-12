@@ -10,7 +10,9 @@ dependencies = [
 {%- for dep in cookiecutter.extra_dependencies %}
     "{{ dep }}",
 {%- endfor %}
+{%- if cookiecutter.deployment_target != 'none' %}
     "google-cloud-logging>=3.12.0,<4.0.0",
+{%- endif %}
 {%- if cookiecutter.deployment_target in ('cloud_run', 'gke') %}
     "google-cloud-aiplatform[evaluation]>={{ aiplatform_floor }}",
     "fastapi>=0.115.8,<1.0.0",
@@ -101,5 +103,4 @@ asyncio_default_fixture_loop_scope = "session"
 
 [tool.hatch.build.targets.wheel]
 packages = ["{{cookiecutter.agent_directory}}","frontend"]
-
 

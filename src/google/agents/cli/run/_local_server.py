@@ -192,14 +192,6 @@ def _build_serve_command(
     Prefers running this projects `fast_api_app.py` under uvicorn when the file exists, otherwise falls back to `adk api_server`.
     """
     if _has_fast_api_app(project_root, agent_dir):
-        if trace_to_cloud:
-            logging.warning(
-                "--otel-to-cloud is ignored when booting %s/fast_api_app.py; "
-                "your fast_api_app.py controls telemetry via its own setup. "
-                "Remove fast_api_app.py to fall back to `adk api_server` with "
-                "the flag applied.",
-                agent_dir,
-            )
         return [
             "uv",
             "run",
@@ -258,6 +250,9 @@ def _start_server(
     )
 
     env = os.environ.copy()
+    env.pop("AGENTS_CLI_OTEL_TO_CLOUD", None)
+    if trace_to_cloud:
+        env["AGENTS_CLI_OTEL_TO_CLOUD"] = "1"
     env["USE_IN_MEMORY_SESSION"] = "true" if use_in_memory_session else "false"
     env.setdefault("PYTHONUNBUFFERED", "1")
 

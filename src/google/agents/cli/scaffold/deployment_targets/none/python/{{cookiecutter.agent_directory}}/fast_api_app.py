@@ -13,25 +13,23 @@
 # limitations under the License.
 
 import contextlib
+import logging
 import os
 from collections.abc import AsyncIterator
 
-import google.auth
 from a2a.server.tasks import InMemoryTaskStore
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from google.adk.cli.fast_api import get_fast_api_app
 from google.adk.runners import Runner
-from google.cloud import logging as google_cloud_logging
 
 from {{cookiecutter.agent_directory}}.app_utils import services
 from {{cookiecutter.agent_directory}}.app_utils.a2a import attach_a2a_routes
 from {{cookiecutter.agent_directory}}.app_utils.typing import Feedback
 
+otel_to_cloud = os.environ.get("AGENTS_CLI_OTEL_TO_CLOUD") == "1"
 load_dotenv()
-_, project_id = google.auth.default()
-logging_client = google_cloud_logging.Client()
-logger = logging_client.logger(__name__)
+logger = logging.getLogger(__name__)
 allow_origins = (
     os.getenv("ALLOW_ORIGINS", "").split(",") if os.getenv("ALLOW_ORIGINS") else None
 )
@@ -68,7 +66,7 @@ app: FastAPI = get_fast_api_app(
     artifact_service_uri=services.ARTIFACT_SERVICE_URI,
     allow_origins=allow_origins,
     session_service_uri=services.SESSION_SERVICE_URI,
-    otel_to_cloud=True,
+    otel_to_cloud=otel_to_cloud,
     lifespan=lifespan,
 )
 app.title = "{{cookiecutter.project_name}}"
@@ -85,7 +83,7 @@ def collect_feedback(feedback: Feedback) -> dict[str, str]:
     Returns:
         Success message
     """
-    logger.log_struct(feedback.model_dump(), severity="INFO")
+    logger.info("Feedback received: %s", feedback.model_dump())
     return {"status": "success"}
 
 
