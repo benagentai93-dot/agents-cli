@@ -23,7 +23,7 @@ import requests
 from packaging import version as pkg_version
 from rich.console import Console
 
-console = Console()
+console = Console(stderr=True)
 
 PACKAGE_NAME = "google-agents-cli"
 # The 0.0.0 sentinel used when a real version can't be determined — an

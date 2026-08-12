@@ -92,10 +92,12 @@ def _warn_legacy_config() -> None:
             "\n⚠️  Legacy configuration detected in pyproject.toml.",
             fg="yellow",
             bold=True,
+            err=True,
         )
         click.secho(
             "   Run `agents-cli scaffold upgrade` to migrate to agents-cli-manifest.yaml.\n",
             fg="yellow",
+            err=True,
         )
         _WARNED_LEGACY_CONFIG = True
 
@@ -186,13 +188,15 @@ def check_cli_version(cfg: ProjectConfig) -> None:
         click.echo(
             f"\n⚠️  Version mismatch: project was scaffolded with agents-cli {acli_version},"
             f" running {__version__}.\n"
-            f"   Upgrade the CLI: uv tool install google-agents-cli@{acli_version}\n"
+            f"   Upgrade the CLI: uv tool install google-agents-cli@{acli_version}\n",
+            err=True,
         )
     elif cli_ver > project_ver:
         click.echo(
             f"\n⚠️  Version mismatch: project was scaffolded with agents-cli {acli_version},"
             f" running {__version__}.\n"
-            "   Upgrade the project: agents-cli scaffold upgrade\n"
+            "   Upgrade the project: agents-cli scaffold upgrade\n",
+            err=True,
         )
 
 

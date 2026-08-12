@@ -218,5 +218,6 @@ def check_skills_version() -> None:
         f"\n⚠️  Skills version mismatch — CLI is v{__version__}, "
         f"but {len(mismatched)} skill(s) differ:\n"
         + "\n".join(lines)
-        + "\n   Run 'agents-cli update' to sync.\n"
+        + "\n   Run 'agents-cli update' to sync.\n",
+        err=True,
     )
