@@ -396,5 +396,7 @@ def cmd_setup(*, workspace, skip_auth, dry_run, dev, interactive, skills_source,
     click.echo(f"  Scope:  {scope}")
 
     click.echo()
+    if not cli_installed:
+        raise click.ClickException("agents-cli installation failed")
     click.secho("  Done.", fg="green", bold=True)
     click.echo()
