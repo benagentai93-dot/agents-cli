@@ -54,6 +54,15 @@ agents-cli supports the `adk` template (Python), with A2A built into every ADK a
 - **Terraform** — same infrastructure-as-code under `deployment/terraform/`
 - **CI/CD pipelines** — same Cloud Build and GitHub Actions configurations
 
+### Deployment order
+
+| Situation | Required order |
+|---|---|
+| Basic Agent Runtime and Cloud Run | Run `agents-cli deploy` directly. |
+| GKE | `agents-cli deploy` runs the required targeted Terraform. |
+| Terraform-managed observability | For every target, run `agents-cli infra single-project --apply` before `agents-cli deploy`. |
+| Existing imperative deployment | Do not apply Terraform afterward; import or delete it before switching, or keep it imperative and configure observability manually. |
+
 ---
 
 ## Migrating an Existing Project

@@ -76,21 +76,28 @@ All three targets are container-based, so any language works.
 1. If prototype (no deployment target), first enhance: `agents-cli scaffold enhance . --deployment-target <target>`
 2. **Notify the human**: "Eval scores meet thresholds and tests pass. Ready to deploy to dev?"
 3. **Wait for explicit approval**
-4. Once approved: `agents-cli deploy`
+4. Once approved, follow the deployment order below.
 
 > **Agent Runtime timeout recovery:** Agent Runtime deploys can take 5-10 minutes and may exceed command timeouts. If the deploy command is cancelled or times out, the deployment continues server-side. Run `agents-cli deploy --status` to check progress — poll every 60 seconds until it reports completion or failure.
 
 **IMPORTANT**: Never run `agents-cli deploy` without explicit human approval.
 
-> **Do NOT run `agents-cli infra single-project` before deploying.** It is not a prerequisite — `agents-cli deploy` works on its own. Run it separately if the user needs observability features (prompt-response logging, BigQuery analytics) — see `/google-agents-cli-observability`.
+### Deployment order
+
+| Situation | Required order |
+|---|---|
+| Basic Agent Runtime and Cloud Run | Run `agents-cli deploy` directly. |
+| GKE | `agents-cli deploy` runs the required targeted Terraform. |
+| Terraform-managed observability | For every target, run `agents-cli infra single-project --apply` before `agents-cli deploy`. |
+| Existing imperative deployment | Do not apply Terraform afterward; import or delete it before switching, or keep it imperative and configure observability manually. |
 
 ### Single-Project Infrastructure Setup (Optional — Advanced)
 
-`agents-cli infra single-project` runs `terraform apply` in `deployment/terraform/single-project/`. Use this to **provision single-project GCP infrastructure without CI/CD** (service accounts, IAM bindings, telemetry resources, Artifact Registry). Also useful to test things in a single project before going to production. It is NOT required for deploying.
+`agents-cli infra single-project --apply` runs `terraform apply` in `deployment/terraform/single-project/`. Use this to **provision single-project GCP infrastructure without CI/CD** (service accounts, IAM bindings, telemetry resources, Artifact Registry). It is required before deployment only when Terraform will manage observability; basic Agent Runtime and Cloud Run deployments do not need it, while GKE deploy handles its own targeted Terraform.
 
 ```bash
-# Optional — provision infrastructure in a single GCP project
-agents-cli infra single-project
+# Apply Terraform-managed infrastructure in a single GCP project
+agents-cli infra single-project --apply
 ```
 
 > **Note:** `agents-cli deploy` doesn't automatically use the Terraform-created `app_sa`. Pass the service account explicitly: `agents-cli deploy --service-account SA_EMAIL`.

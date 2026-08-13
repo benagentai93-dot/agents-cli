@@ -119,6 +119,15 @@ See the [full tutorial](https://google.github.io/agents-cli/guide/quickstart-tut
 
 </details>
 
+### Deployment order
+
+| Situation | Required order |
+|---|---|
+| Basic Agent Runtime and Cloud Run | Run `agents-cli deploy` directly. |
+| GKE | `agents-cli deploy` runs the required targeted Terraform. |
+| Terraform-managed observability | For every target, run `agents-cli infra single-project --apply` before `agents-cli deploy`. |
+| Existing imperative deployment | Do not apply Terraform afterward; import or delete it before switching, or keep it imperative and configure observability manually. |
+
 ## How it works
 
 <div align="center">

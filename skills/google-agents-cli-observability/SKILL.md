@@ -22,15 +22,20 @@ metadata:
 
 # ADK Observability Guide
 
-> **Cloud Trace** works out of the box — no infrastructure needed. **Prompt-response logging** and **BigQuery Agent Analytics** require Terraform-provisioned infrastructure (service account, GCS bucket, BigQuery dataset). Run `agents-cli infra single-project --project PROJECT_ID` to provision these resources. See `references/cloud-trace-and-logging.md` for details, env vars, and verification commands. If your project isn't scaffolded yet, see `/google-agents-cli-scaffold` first.
+> **Cloud Trace** works out of the box — no infrastructure needed. **Prompt-response logging** and **BigQuery Agent Analytics** require Terraform-provisioned infrastructure (service account, GCS bucket, BigQuery dataset). Run `agents-cli infra single-project --apply --project PROJECT_ID` to provision these resources. See `references/cloud-trace-and-logging.md` for details, env vars, and verification commands. If your project isn't scaffolded yet, see `/google-agents-cli-scaffold` first.
 
-### Order of operations for `agent_runtime` deployments
+### Deployment order
 
-For `deployment_target = agent_runtime`, run `agents-cli infra single-project` **before** the first `agents-cli deploy`. The Terraform module owns the entire Reasoning Engine resource (service account, deployment spec, env vars), so applying it after an SDK-based deploy creates a state mismatch Terraform can't reconcile without taking ownership of the whole resource.
+| Situation | Required order |
+|---|---|
+| Basic Agent Runtime and Cloud Run | Run `agents-cli deploy` directly. |
+| GKE | `agents-cli deploy` runs the required targeted Terraform. |
+| Terraform-managed observability | For every target, run `agents-cli infra single-project --apply` before `agents-cli deploy`. |
+| Existing imperative deployment | Do not apply Terraform afterward; import or delete it before switching, or keep it imperative and configure observability manually. |
 
-Already ran `agents-cli deploy`? Two options:
+Applying Terraform after an imperative deployment creates a state mismatch unless Terraform first imports or replaces the existing resources. Already ran `agents-cli deploy`? Two options:
 
-1. **Switch to Terraform-managed** — delete the SDK-deployed Reasoning Engine, then run `agents-cli infra single-project` and `agents-cli deploy` (sessions and in-flight state are lost).
+1. **Switch to Terraform-managed** — import the existing resources into Terraform state, or delete them and then run `agents-cli infra single-project --apply` followed by `agents-cli deploy` (deletion loses sessions and in-flight state).
 2. **Keep the SDK-deployed instance** — skip `infra single-project` and set the observability env vars by re-running `agents-cli deploy --update-env-vars "KEY=VALUE,..."`; deploy matches the existing Reasoning Engine by display name and updates it in place, preserving env vars set outside the deploy. You must also grant its service account the telemetry IAM roles the Terraform module would otherwise provision: `roles/storage.admin` (write completions to the logs bucket), `roles/logging.logWriter`, `roles/cloudtrace.agent`, plus `roles/bigquery.dataOwner` + `roles/bigquery.jobUser` when scaffolded with `--bq-analytics`. The full set lives in `deployment/terraform/single-project/iam.tf` (from `app_sa_roles`) and `telemetry.tf`. Terraform-managed env vars aren't available in this mode.
 
 ### Reference Files
