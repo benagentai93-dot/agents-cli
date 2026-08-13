@@ -135,6 +135,11 @@ main.add_lazy_command(
     "google.agents.cli.scaffold.commands.create:create",
     "Create GCP-based AI agent projects from templates.",
 )
+main.add_lazy_command(
+    "init",
+    "google.agents.cli.cmd_init:cmd_init",
+    "Initialize an existing Python ADK project.",
+)
 
 # Dev commands
 main.add_lazy_command(
