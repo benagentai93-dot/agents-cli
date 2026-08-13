@@ -19,6 +19,7 @@ from __future__ import annotations
 import logging
 import os
 import tomllib
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -121,7 +122,14 @@ def read_project_config(project_dir: str | None = None) -> ProjectConfig:
     if manifest_path.exists():
         # Primary: read from manifest
         with open(manifest_path, encoding="utf-8") as f:
-            data = yaml.safe_load(f) or {}
+            data = yaml.safe_load(f)
+        if not isinstance(data, Mapping) or not isinstance(
+            data.get("create_params", {}), Mapping
+        ):
+            raise click.ClickException(
+                "Invalid agents-cli-manifest.yaml: file contents and create_params "
+                "must be mappings."
+            )
     elif pyproject_path.exists():
         # Fallback: read from pyproject.toml
         with open(pyproject_path, "rb") as f:
