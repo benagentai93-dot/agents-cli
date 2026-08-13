@@ -38,7 +38,6 @@ from vertexai._genai.types import AgentEngine, AgentEngineConfig, IdentityType
 from vertexai.agent_engines.templates.adk import AdkApp
 
 from google.agents.cli._agent_runtime_a2a import build_agent_runtime_a2a_card_url
-from google.agents.cli._gcp_project import get_gcp_project_number
 from google.agents.cli._project import (
     ProjectConfig,
     find_project_root,
@@ -319,11 +318,19 @@ def _select_agent_runtime(
                 f"{METADATA_FILE} deployment_target does not match agent_runtime."
             )
         parts = _runtime_resource_parts(remote_id)
-        project_number = get_gcp_project_number(project)
-        if not parts or not project_number:
+        if not parts:
             raise click.ClickException(
                 f"Invalid Agent Runtime identity in {METADATA_FILE}."
             )
+        try:
+            project_resource = resourcemanager_v3.ProjectsClient().get_project(
+                name=f"projects/{project}"
+            )
+            project_number = project_resource.name.rpartition("/")[2]
+        except Exception as e:
+            raise click.ClickException(
+                f"Could not validate the GCP project for {METADATA_FILE}: {e}"
+            ) from e
         metadata_project, metadata_location = parts
         if metadata_project != project_number or metadata_location != location:
             raise click.ClickException(

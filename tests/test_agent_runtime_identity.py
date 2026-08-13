@@ -12,7 +12,6 @@ from types import SimpleNamespace
 import click
 import pytest
 
-from google.agents.cli import _gcp_project
 from google.agents.cli._project import ProjectConfig
 from google.agents.cli.deploy import _operation, agent_runtime
 
@@ -96,12 +95,14 @@ def _deploy(monkeypatch, tmp_path, engines: _AgentEngines, metadata=None, **kwar
         lambda **_kwargs: SimpleNamespace(agent_engines=engines),
     )
     monkeypatch.setattr(agent_runtime.vertexai, "init", lambda **_kwargs: None)
-    monkeypatch.setattr(_gcp_project, "get_gcp_project_number", lambda _project: PROJECT_NUMBER)
     monkeypatch.setattr(
-        agent_runtime,
-        "get_gcp_project_number",
-        lambda _project: PROJECT_NUMBER,
-        raising=False,
+        agent_runtime.resourcemanager_v3,
+        "ProjectsClient",
+        lambda: SimpleNamespace(
+            get_project=lambda **_kwargs: SimpleNamespace(
+                name=f"projects/{PROJECT_NUMBER}"
+            )
+        ),
     )
     no_wait = kwargs.pop("no_wait", True)
     return agent_runtime.deploy_agent_runtime(
@@ -140,6 +141,23 @@ def test_deploy_prefers_valid_metadata_identity_over_display_name_list(
     updates = [call for call in engines.calls if call[0] == "_update"]
     assert len(updates) == 1
     assert updates[0][1] == RESOURCE_NAME
+
+
+def test_metadata_identity_does_not_require_gcloud(monkeypatch, tmp_path) -> None:
+    engines = _AgentEngines(fetched=_agent(RESOURCE_NAME))
+    monkeypatch.setenv("PATH", "")
+
+    _deploy(
+        monkeypatch,
+        tmp_path,
+        engines,
+        {
+            "remote_agent_runtime_id": RESOURCE_NAME,
+            "deployment_target": "agent_runtime",
+        },
+    )
+
+    assert ("get", RESOURCE_NAME) in engines.calls
 
 
 def test_deploy_rejects_metadata_display_mismatch_before_mutation(
