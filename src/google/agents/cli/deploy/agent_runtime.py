@@ -322,17 +322,10 @@ def _select_agent_runtime(
             raise click.ClickException(
                 f"Invalid Agent Runtime identity in {METADATA_FILE}."
             )
-        try:
-            project_resource = resourcemanager_v3.ProjectsClient().get_project(
-                name=f"projects/{project}"
-            )
-            project_number = project_resource.name.rpartition("/")[2]
-        except Exception as e:
-            raise click.ClickException(
-                f"Could not validate the GCP project for {METADATA_FILE}: {e}"
-            ) from e
         metadata_project, metadata_location = parts
-        if metadata_project != project_number or metadata_location != location:
+        if metadata_location != location or (
+            project.isdigit() and metadata_project != project
+        ):
             raise click.ClickException(
                 f"Agent Runtime identity in {METADATA_FILE} does not match "
                 "the requested project and location."
@@ -349,6 +342,21 @@ def _select_agent_runtime(
                 f"Agent Runtime identity in {METADATA_FILE} does not match "
                 "the deployed resource name or display name."
             )
+        if not project.isdigit():
+            try:
+                belongs_to_project = any(
+                    listed.api_resource.name == remote_id
+                    for listed in client.agent_engines.list()
+                )
+            except Exception as e:
+                raise click.ClickException(
+                    f"Could not validate the GCP project for {METADATA_FILE}: {e}"
+                ) from e
+            if not belongs_to_project:
+                raise click.ClickException(
+                    f"Agent Runtime identity in {METADATA_FILE} does not match "
+                    "the requested project and location."
+                )
         return [agent]
 
     matching = [
@@ -833,18 +841,32 @@ def _start_and_record_operation(
 ) -> Any:
     """Start the create/update operation and persist it so ``deploy --status``
     can recover it if the command is interrupted."""
+    if read_operation():
+        raise click.ClickException(
+            "A deployment operation is already pending.\n"
+            "  Run 'agents-cli deploy --status' before starting another deploy."
+        )
     operation = _start_deploy_operation(
         client,
         config,
         matching_agents,
         action="update" if matching_agents else "create",
     )
-    write_operation(
-        operation_name=operation.name,
-        project=project,
-        location=location,
-        deployment_target="agent_runtime",
-    )
+    try:
+        write_operation(
+            operation_name=operation.name,
+            project=project,
+            location=location,
+            deployment_target="agent_runtime",
+        )
+    except Exception as e:
+        raise click.ClickException(
+            "The remote deployment started, but its local status record could not "
+            f"be written: {e}\n"
+            f"  Operation: {operation.name}\n"
+            "  Restore write access, record this operation as pending, then run "
+            "'agents-cli deploy --status'."
+        ) from e
     return operation
 
 

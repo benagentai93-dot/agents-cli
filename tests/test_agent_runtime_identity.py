@@ -95,15 +95,6 @@ def _deploy(monkeypatch, tmp_path, engines: _AgentEngines, metadata=None, **kwar
         lambda **_kwargs: SimpleNamespace(agent_engines=engines),
     )
     monkeypatch.setattr(agent_runtime.vertexai, "init", lambda **_kwargs: None)
-    monkeypatch.setattr(
-        agent_runtime.resourcemanager_v3,
-        "ProjectsClient",
-        lambda: SimpleNamespace(
-            get_project=lambda **_kwargs: SimpleNamespace(
-                name=f"projects/{PROJECT_NUMBER}"
-            )
-        ),
-    )
     no_wait = kwargs.pop("no_wait", True)
     return agent_runtime.deploy_agent_runtime(
         cfg=ProjectConfig(
@@ -122,7 +113,10 @@ def test_deploy_prefers_valid_metadata_identity_over_display_name_list(
     monkeypatch, tmp_path
 ) -> None:
     engines = _AgentEngines(
-        listed=[_agent("projects/other/locations/other/reasoningEngines/wrong")],
+        listed=[
+            _agent(RESOURCE_NAME),
+            _agent("projects/other/locations/other/reasoningEngines/wrong"),
+        ],
         fetched=_agent(RESOURCE_NAME),
     )
 
@@ -136,16 +130,25 @@ def test_deploy_prefers_valid_metadata_identity_over_display_name_list(
         },
     )
 
-    assert ("list",) not in engines.calls
     assert ("get", RESOURCE_NAME) in engines.calls
+    assert engines.calls.index(("get", RESOURCE_NAME)) < engines.calls.index(("list",))
     updates = [call for call in engines.calls if call[0] == "_update"]
     assert len(updates) == 1
     assert updates[0][1] == RESOURCE_NAME
 
 
-def test_metadata_identity_does_not_require_gcloud(monkeypatch, tmp_path) -> None:
-    engines = _AgentEngines(fetched=_agent(RESOURCE_NAME))
+def test_metadata_identity_does_not_require_gcloud_or_resource_manager_api(
+    monkeypatch, tmp_path
+) -> None:
+    engines = _AgentEngines(
+        listed=[_agent(RESOURCE_NAME)], fetched=_agent(RESOURCE_NAME)
+    )
     monkeypatch.setenv("PATH", "")
+    monkeypatch.setattr(
+        agent_runtime.resourcemanager_v3,
+        "ProjectsClient",
+        lambda: (_ for _ in ()).throw(AssertionError("must not use Resource Manager")),
+    )
 
     _deploy(
         monkeypatch,
@@ -341,6 +344,47 @@ def test_clear_operation_preserves_metadata_written_while_pending(
     assert json.loads(path.read_text()) == {**original, "some_other_writer": "keep"}
 
 
+def test_pending_deploy_rejects_second_mutation_and_preserves_operation(
+    monkeypatch, tmp_path
+) -> None:
+    pending = {
+        "operation_name": f"{RESOURCE_NAME}/operations/first",
+        "project": "sample-project",
+        "location": LOCATION,
+        "deployment_target": "agent_runtime",
+        "started_at": "2026-08-13T00:00:00+00:00",
+    }
+    metadata = {"pending_operation": pending}
+    engines = _AgentEngines()
+
+    with pytest.raises(click.ClickException, match=r"deploy --status"):
+        _deploy(monkeypatch, tmp_path, engines, metadata)
+
+    assert not {"_create", "_update"} & {call[0] for call in engines.calls}
+    assert json.loads(
+        tmp_path.joinpath("deployment_metadata.json").read_text()
+    ) == metadata
+
+
+def test_operation_record_failure_reports_remote_operation(
+    monkeypatch, tmp_path
+) -> None:
+    engines = _AgentEngines()
+    monkeypatch.setattr(
+        agent_runtime,
+        "write_operation",
+        lambda **_kwargs: (_ for _ in ()).throw(OSError("disk full")),
+    )
+
+    with pytest.raises(click.ClickException) as exc_info:
+        _deploy(monkeypatch, tmp_path, engines)
+
+    message = str(exc_info.value)
+    assert f"{RESOURCE_NAME}/operations/create" in message
+    assert "deploy --status" in message
+    assert [call[0] for call in engines.calls].count("_create") == 1
+
+
 def test_failed_deployment_restores_previous_metadata_bytes(
     monkeypatch, tmp_path
 ) -> None:
@@ -349,7 +393,9 @@ def test_failed_deployment_restores_previous_metadata_bytes(
         "deployment_target": "agent_runtime",
     }
     engines = _AgentEngines(
-        fetched=_agent(RESOURCE_NAME), operation_error="deployment failed"
+        listed=[_agent(RESOURCE_NAME)],
+        fetched=_agent(RESOURCE_NAME),
+        operation_error="deployment failed",
     )
 
     with pytest.raises(click.ClickException, match="Deployment failed"):
@@ -367,7 +413,9 @@ def test_failed_secret_clear_restores_previous_metadata_bytes(
         "deployment_target": "agent_runtime",
     }
     engines = _AgentEngines(
-        fetched=_agent(RESOURCE_NAME), clear_error="secret clear failed"
+        listed=[_agent(RESOURCE_NAME)],
+        fetched=_agent(RESOURCE_NAME),
+        clear_error="secret clear failed",
     )
 
     with pytest.raises(click.ClickException, match="clear Agent Runtime secrets"):
