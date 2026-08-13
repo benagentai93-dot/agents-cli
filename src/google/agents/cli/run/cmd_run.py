@@ -69,9 +69,8 @@ class _DispatchTarget(NamedTuple):
     headers: dict
     mode: str
     app_name: str
-    # True only when this invocation started the local server; False when a
-    # running server was reused or for remote (--url) runs.
-    started_server: bool = False
+    # Set only when this invocation started the local server.
+    owned_server_pid: int | None = None
 
 
 def _resolve_dispatch_target(
@@ -120,7 +119,7 @@ def _resolve_dispatch_target(
         headers={},
         mode="adk",
         app_name=app_name or cfg.agent_directory,
-        started_server=server.started,
+        owned_server_pid=server.owned_pid,
     )
 
 
@@ -305,7 +304,9 @@ def cmd_run(
 
     # Only tear down a server this invocation started; a reused persistent
     # server (e.g. from --start-server) is left running.
-    should_stop_server = not url and not start_server and target.started_server
+    should_stop_server = (
+        not url and not start_server and target.owned_server_pid is not None
+    )
     try:
         _dispatch_query(
             service_url=target.service_url,
@@ -323,9 +324,6 @@ def cmd_run(
         httpx.TransportError,
     ) as exc:
         if not url:
-            # The local server is unreachable or wedged — stop it (even one we
-            # reused) so a later retry starts a fresh one.
-            should_stop_server = True
             raise
         raise click.ClickException(
             f"Could not reach remote agent at: {url}\n"
@@ -335,7 +333,7 @@ def cmd_run(
     finally:
         if should_stop_server:
             # cwd is the project root here (set by _resolve_dispatch_target).
-            stop_server(Path.cwd())
+            stop_server(Path.cwd(), expected_pid=target.owned_server_pid)
 
 
 def _dispatch_query(

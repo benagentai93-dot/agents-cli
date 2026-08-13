@@ -56,7 +56,7 @@ def test_server_reuses_only_matching_session_mode(
         tmp_path, "app", use_in_memory_session=mode
     )
 
-    assert info == _local_server.ServerInfo(18080, started=False)
+    assert info == _local_server.ServerInfo(18080, owned_pid=None)
     assert state["stopped"] == []
 
 
@@ -88,7 +88,7 @@ def test_legacy_metadata_reuses_historical_in_memory_default(
         tmp_path, "app", use_in_memory_session=True
     )
 
-    assert info == _local_server.ServerInfo(18080, started=False)
+    assert info == _local_server.ServerInfo(18080, owned_pid=None)
     assert state["stopped"] == []
 
 

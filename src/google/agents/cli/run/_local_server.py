@@ -45,16 +45,15 @@ _DEFAULT_STARTUP_TIMEOUT = (
 
 
 class ServerInfo(NamedTuple):
-    """A running local server's port, and whether *this* call started it.
+    """A running local server and any process owned by this call.
 
-    ``started`` is ``True`` only when ``ensure_server`` launched a new
-    process; it is ``False`` when an already-running server was reused.
-    Callers use it to avoid tearing down a server someone else is keeping
-    alive (e.g. one started with ``--start-server``).
+    ``owned_pid`` is set only when ``ensure_server`` launched a new process;
+    it is ``None`` when an already-running server was reused. Callers use it
+    to avoid tearing down a server someone else is keeping alive.
     """
 
     port: int
-    started: bool
+    owned_pid: int | None = None
 
 
 def ensure_server(
@@ -84,8 +83,7 @@ def ensure_server(
             whatever env it was started with.
 
     Returns:
-        A :class:`ServerInfo` with the port and whether this call started
-        the server.
+        A :class:`ServerInfo` with the port and any PID owned by this call.
     """
     info = _read_pid_file(project_root)
 
@@ -111,7 +109,7 @@ def ensure_server(
                         err=True,
                     )
                 _update_activity(project_root)
-                return ServerInfo(info["port"], started=False)
+                return ServerInfo(info["port"], owned_pid=None)
         else:
             # Stale PID file — clean up before starting fresh.
             _cleanup(project_root, info)
@@ -134,17 +132,20 @@ def ensure_server(
     )
     click.secho(f"Local server started on port {port} (PID {pid})", dim=True)
     click.secho("  Stop with: agents-cli run --stop-server", dim=True)
-    return ServerInfo(port, started=True)
+    return ServerInfo(port, owned_pid=pid)
 
 
-def stop_server(project_root: Path) -> bool:
+def stop_server(project_root: Path, *, expected_pid: int | None = None) -> bool:
     """Stop the background server.
+
+    When *expected_pid* is provided, stop the server only if the current PID
+    metadata still identifies that process. Explicit user stops omit it.
 
     Returns:
         ``True`` if a server was found and stopped.
     """
     info = _read_pid_file(project_root)
-    if not info:
+    if not info or (expected_pid is not None and info.get("pid") != expected_pid):
         return False
     _cleanup(project_root, info)
     click.secho("Local server stopped.", dim=True)

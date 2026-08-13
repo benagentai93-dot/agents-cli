@@ -684,4 +684,5 @@ def _run_against_local_server(
             custom_headers=custom_headers,
         )
     finally:
-        stop_server(project_root)
+        if server_info.owned_pid is not None:
+            stop_server(project_root, expected_pid=server_info.owned_pid)
