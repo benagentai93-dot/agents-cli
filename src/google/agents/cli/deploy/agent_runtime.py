@@ -45,10 +45,13 @@ from google.agents.cli._project import (
 )
 from google.agents.cli.deploy._operation import (
     METADATA_FILE,
+    OperationPendingError,
+    claim_operation,
     clear_operation,
+    finish_operation,
     read_deployment_metadata,
     read_operation,
-    write_metadata,
+    update_metadata,
     write_operation,
 )
 from google.agents.cli.deploy._utils import (
@@ -188,6 +191,9 @@ def build_agent_engine_logs_url(operation_name: str, project: str) -> str:
 def write_deployment_metadata(
     remote_agent: Any,
     cfg: ProjectConfig,
+    *,
+    claim_id: str | None = None,
+    operation_name: str | None = None,
 ) -> None:
     """Write deployment metadata to file."""
     metadata = {
@@ -198,7 +204,10 @@ def write_deployment_metadata(
         "deployment_timestamp": datetime.datetime.now(tz=datetime.UTC).isoformat(),
     }
 
-    write_metadata(metadata)
+    if claim_id is not None or operation_name is not None:
+        finish_operation(claim_id, metadata, operation_name=operation_name)
+    else:
+        update_metadata(metadata)
 
     logging.info(f"Agent Runtime ID written to {METADATA_FILE}")
 
@@ -244,7 +253,6 @@ def print_deployment_success(
 
 def setup_agent_identity(client: Any, project: str, display_name: str) -> Any:
     """Create agent with identity and grant required IAM roles."""
-    click.echo(f"\n🔧 Creating agent identity for: {display_name}")
     agent = client.agent_engines.create(
         config={
             "identity_type": IdentityType.AGENT_IDENTITY,
@@ -576,9 +584,38 @@ def deploy_agent_runtime(
     # creates a bare identity agent (no deployment spec), but it's still a
     # first-time spec deploy so the conservative defaults must apply.
     is_update = bool(matching_agents)
+    operation_claim: str | None = None
 
     # Setup agent identity on first deployment
     if agent_identity and not matching_agents:
+        # Keep the local-only announcement before the claim; the helper's first
+        # action is then the ambiguous remote identity create.
+        click.echo(f"\n🔧 Creating agent identity for: {display_name}")
+        try:
+            operation_claim = claim_operation(project, location, "agent_runtime")
+        except OperationPendingError as e:
+            raise click.ClickException(
+                "A deployment operation is already pending.\n"
+                "  Run 'agents-cli deploy --status' before starting another deploy."
+            ) from e
+        try:
+            claimed_agents = _select_agent_runtime(
+                client,
+                project=project,
+                location=location,
+                display_name=display_name,
+            )
+        except Exception:
+            clear_operation(operation_claim)
+            raise
+        if claimed_agents:
+            clear_operation(operation_claim)
+            raise click.ClickException(
+                "The Agent Runtime deployment target changed while this deploy was "
+                "starting; retry the deploy."
+            )
+        # setup_agent_identity starts with a remote create. Once it is called,
+        # any exception may follow a mutation, so its claim stays fail-closed.
         matching_agents = [setup_agent_identity(client, project, display_name)]
     if not is_update:
         # Create: no existing spec to preserve; apply the conservative shape.
@@ -724,8 +761,13 @@ def deploy_agent_runtime(
     wait_note = "not waiting for completion" if no_wait else "this can take a few minutes"
     click.echo(f"\n🚀 {action} agent: {display_name} ({wait_note})...")
 
-    operation = _start_and_record_operation(
-        client, config, matching_agents, project, location
+    operation, operation_claim = _start_and_record_operation(
+        client,
+        config,
+        matching_agents,
+        project,
+        location,
+        claim_id=operation_claim,
     )
     logs_url = build_agent_engine_logs_url(operation.name, project)
 
@@ -748,7 +790,7 @@ def deploy_agent_runtime(
         operation_name=operation.name,
     )
     if completed_op.error:
-        clear_operation()
+        clear_operation(operation_claim)
         raise click.ClickException(f"Deployment failed: {completed_op.error}")
 
     # Retrieve the newly created/updated agent engine using the public client.agent_engines.get()
@@ -775,34 +817,24 @@ def deploy_agent_runtime(
             get_operation_fn=client.agent_engines._get_agent_operation,
         )
         if completed_clear_op.error:
-            clear_operation()
+            clear_operation(operation_claim)
             raise click.ClickException(
                 f"Failed to clear Agent Runtime secrets: {completed_clear_op.error}"
             )
 
-    write_deployment_metadata(remote_agent, cfg)
+    write_deployment_metadata(remote_agent, cfg, claim_id=operation_claim)
     print_deployment_success(remote_agent, location, project, cfg)
-    clear_operation()
 
     return remote_agent
 
 
-def _start_deploy_operation(
+def _prepare_deploy_config(
     client: Any,
     config: AgentEngineConfig,
-    matching_agents: list[Any],
     action: str,
 ) -> Any:
-    """Start a create or update operation without waiting for completion.
-
-    Replicates the first half of the public create()/update() methods —
-    builds the API config and fires the request — but skips the blocking
-    ``_await_operation()`` call.
-
-    Returns:
-        An ``AgentEngineOperation`` with ``.name`` and ``.done`` fields.
-    """
-    api_config = client.agent_engines._create_config(
+    """Build the SDK request config without starting a remote mutation."""
+    return client.agent_engines._create_config(
         mode=action,
         display_name=config.display_name,
         description=config.description,
@@ -824,6 +856,13 @@ def _start_deploy_operation(
         image_spec=config.image_spec,
     )
 
+
+def _start_deploy_operation(
+    client: Any,
+    api_config: Any,
+    matching_agents: list[Any],
+) -> Any:
+    """Submit a create or update operation without waiting for completion."""
     if matching_agents:
         return client.agent_engines._update(
             name=matching_agents[0].api_resource.name,
@@ -838,19 +877,58 @@ def _start_and_record_operation(
     matching_agents: list[Any],
     project: str,
     location: str,
-) -> Any:
+    *,
+    claim_id: str | None = None,
+) -> tuple[Any, str]:
     """Start the create/update operation and persist it so ``deploy --status``
     can recover it if the command is interrupted."""
-    if read_operation():
+    must_revalidate = claim_id is None
+    try:
+        claim_id = claim_id or claim_operation(project, location, "agent_runtime")
+    except OperationPendingError as e:
         raise click.ClickException(
             "A deployment operation is already pending.\n"
             "  Run 'agents-cli deploy --status' before starting another deploy."
+        ) from e
+    if must_revalidate:
+        assert config.display_name is not None
+        selected_resource = (
+            matching_agents[0].api_resource.name if matching_agents else None
         )
+        try:
+            claimed_agents = _select_agent_runtime(
+                client,
+                project=project,
+                location=location,
+                display_name=config.display_name,
+            )
+        except Exception:
+            clear_operation(claim_id)
+            raise
+        claimed_resource = claimed_agents[0].api_resource.name if claimed_agents else None
+        if claimed_resource != selected_resource:
+            clear_operation(claim_id)
+            raise click.ClickException(
+                "The Agent Runtime deployment target changed while this deploy was "
+                "starting; retry the deploy."
+            )
+        matching_agents = claimed_agents
+    try:
+        api_config = _prepare_deploy_config(
+            client,
+            config,
+            action="update" if matching_agents else "create",
+        )
+    except Exception:
+        # A claim passed by the identity path follows a remote identity create;
+        # only a claim made here is known to be safe to restore.
+        if must_revalidate:
+            clear_operation(claim_id)
+        raise
     operation = _start_deploy_operation(
         client,
-        config,
+        api_config,
         matching_agents,
-        action="update" if matching_agents else "create",
     )
     try:
         write_operation(
@@ -858,6 +936,7 @@ def _start_and_record_operation(
             project=project,
             location=location,
             deployment_target="agent_runtime",
+            claim_id=claim_id,
         )
     except Exception as e:
         raise click.ClickException(
@@ -867,7 +946,7 @@ def _start_and_record_operation(
             "  Restore write access, record this operation as pending, then run "
             "'agents-cli deploy --status'."
         ) from e
-    return operation
+    return operation, claim_id
 
 
 def check_agent_runtime_operation(
@@ -883,7 +962,13 @@ def check_agent_runtime_operation(
             "  Run 'agents-cli deploy' or 'agents-cli deploy --no-wait' first."
         )
 
-    operation_name = op_data["operation_name"]
+    operation_name = op_data.get("operation_name")
+    if not isinstance(operation_name, str) or not operation_name:
+        raise click.ClickException(
+            "A deployment start was interrupted before its remote operation was "
+            "recorded.\n"
+            "  Confirm the Agent Runtime state before removing the pending claim."
+        )
     location = location if location != "us-east1" else op_data.get("location", location)
     started_at = op_data.get("started_at", "")
 
@@ -894,7 +979,7 @@ def check_agent_runtime_operation(
 
     if operation.done:
         if operation.error:
-            clear_operation()
+            clear_operation(op_data.get("claim_id"), operation_name=operation_name)
             raise click.ClickException(f"Deployment failed: {operation.error}")
 
         # Retrieve the newly created/updated agent engine using the public client.agent_engines.get()
@@ -902,9 +987,13 @@ def check_agent_runtime_operation(
         resource_name = _get_resource_name_from_operation(operation_name)
         remote_agent = client.agent_engines.get(name=resource_name)
 
-        write_deployment_metadata(remote_agent, cfg)
+        write_deployment_metadata(
+            remote_agent,
+            cfg,
+            claim_id=op_data.get("claim_id"),
+            operation_name=operation_name,
+        )
         print_deployment_success(remote_agent, location, project, cfg)
-        clear_operation()
     else:
         elapsed = ""
         if started_at:
