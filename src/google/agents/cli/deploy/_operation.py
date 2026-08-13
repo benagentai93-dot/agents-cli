@@ -21,13 +21,16 @@ name and metadata are persisted as a ``pending_operation`` field inside
 
 from __future__ import annotations
 
+import base64
 import datetime
 import json
 import logging
 import os
+import tempfile
 from typing import Any
 
 METADATA_FILE = "deployment_metadata.json"
+_PREVIOUS_METADATA = "_previous_metadata"
 
 
 def _read_metadata() -> dict[str, Any]:
@@ -56,6 +59,43 @@ def _read_metadata() -> dict[str, Any]:
     return data
 
 
+def read_deployment_metadata() -> dict[str, Any] | None:
+    """Read deployment metadata strictly when selecting a mutation target."""
+    if not os.path.exists(METADATA_FILE):
+        return None
+    try:
+        with open(METADATA_FILE, encoding="utf-8") as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, OSError) as e:
+        raise ValueError(f"Could not read {METADATA_FILE}: {e}") from e
+    if not isinstance(data, dict):
+        raise ValueError(f"{METADATA_FILE} must contain a JSON object")
+    return data
+
+
+def _replace_metadata_bytes(content: bytes) -> None:
+    directory = os.path.dirname(os.path.abspath(METADATA_FILE))
+    fd, temporary = tempfile.mkstemp(prefix=f".{METADATA_FILE}.", dir=directory)
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(content)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temporary, METADATA_FILE)
+    except BaseException:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+        raise
+
+
+def write_metadata(data: dict[str, Any]) -> None:
+    """Atomically replace METADATA_FILE with *data*."""
+    content = (json.dumps(data, indent=2) + "\n").encode()
+    _replace_metadata_bytes(content)
+
+
 def write_operation(
     operation_name: str,
     project: str,
@@ -72,10 +112,18 @@ def write_operation(
     }
 
     # Merge into existing metadata if present
+    existed = os.path.exists(METADATA_FILE)
+    previous = b""
+    if existed:
+        with open(METADATA_FILE, "rb") as f:
+            previous = f.read()
+    pending[_PREVIOUS_METADATA] = {
+        "existed": existed,
+        "content": base64.b64encode(previous).decode("ascii"),
+    }
     data = _read_metadata()
     data["pending_operation"] = pending
-    with open(METADATA_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
+    write_metadata(data)
 
 
 def read_operation() -> dict[str, Any] | None:
@@ -86,7 +134,19 @@ def read_operation() -> dict[str, Any] | None:
 def clear_operation() -> None:
     """Remove the pending_operation field from METADATA_FILE."""
     data = _read_metadata()
-    if "pending_operation" in data:
-        del data["pending_operation"]
-        with open(METADATA_FILE, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
+    pending = data.get("pending_operation")
+    if not isinstance(pending, dict):
+        return
+    previous = pending.get(_PREVIOUS_METADATA)
+    if isinstance(previous, dict) and isinstance(previous.get("existed"), bool):
+        if previous["existed"]:
+            try:
+                content = base64.b64decode(previous.get("content", ""), validate=True)
+            except (ValueError, TypeError) as e:
+                raise ValueError("Invalid previous deployment metadata") from e
+            _replace_metadata_bytes(content)
+        else:
+            os.unlink(METADATA_FILE)
+        return
+    del data["pending_operation"]
+    write_metadata(data)

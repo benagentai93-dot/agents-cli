@@ -21,7 +21,6 @@ with runtime checks via ProjectConfig.
 from __future__ import annotations
 
 import datetime
-import json
 import logging
 import os
 import urllib.parse
@@ -38,6 +37,7 @@ from vertexai._genai import _agent_engines_utils
 from vertexai._genai.types import AgentEngine, AgentEngineConfig, IdentityType
 
 from google.agents.cli._agent_runtime_a2a import build_agent_runtime_a2a_card_url
+from google.agents.cli._gcp_project import get_gcp_project_number
 from google.agents.cli._project import (
     ProjectConfig,
     find_project_root,
@@ -46,7 +46,9 @@ from google.agents.cli._project import (
 from google.agents.cli.deploy._operation import (
     METADATA_FILE,
     clear_operation,
+    read_deployment_metadata,
     read_operation,
+    write_metadata,
     write_operation,
 )
 from google.agents.cli.deploy._utils import (
@@ -196,8 +198,7 @@ def write_deployment_metadata(
         "deployment_timestamp": datetime.datetime.now(tz=datetime.UTC).isoformat(),
     }
 
-    with open(METADATA_FILE, "w", encoding="utf-8") as f:
-        json.dump(metadata, f, indent=2)
+    write_metadata(metadata)
 
     logging.info(f"Agent Runtime ID written to {METADATA_FILE}")
 
@@ -274,6 +275,85 @@ def setup_agent_identity(client: Any, project: str, display_name: str) -> Any:
     )
     click.echo("  ✅ Agent identity ready")
     return agent
+
+
+def _runtime_resource_parts(resource_name: str) -> tuple[str, str] | None:
+    parts = resource_name.split("/")
+    if (
+        len(parts) == 6
+        and parts[0] == "projects"
+        and parts[1]
+        and parts[2] == "locations"
+        and parts[3]
+        and parts[4] == "reasoningEngines"
+        and parts[5]
+    ):
+        return parts[1], parts[3]
+    return None
+
+
+def _select_agent_runtime(
+    client: Any,
+    *,
+    project: str,
+    location: str,
+    display_name: str,
+) -> list[Any]:
+    """Resolve an update target without guessing between same-name resources."""
+    try:
+        metadata = read_deployment_metadata()
+    except ValueError as e:
+        raise click.ClickException(str(e)) from e
+
+    has_remote_id = metadata is not None and "remote_agent_runtime_id" in metadata
+    remote_id = metadata.get("remote_agent_runtime_id") if metadata else None
+    if has_remote_id and remote_id != "None":
+        assert metadata is not None
+        if not isinstance(remote_id, str) or not remote_id:
+            raise click.ClickException(
+                f"Invalid Agent Runtime identity in {METADATA_FILE}."
+            )
+        if metadata.get("deployment_target") != "agent_runtime":
+            raise click.ClickException(
+                f"{METADATA_FILE} deployment_target does not match agent_runtime."
+            )
+        parts = _runtime_resource_parts(remote_id)
+        project_number = get_gcp_project_number(project)
+        if not parts or not project_number:
+            raise click.ClickException(
+                f"Invalid Agent Runtime identity in {METADATA_FILE}."
+            )
+        metadata_project, metadata_location = parts
+        if metadata_project != project_number or metadata_location != location:
+            raise click.ClickException(
+                f"Agent Runtime identity in {METADATA_FILE} does not match "
+                "the requested project and location."
+            )
+        try:
+            agent = client.agent_engines.get(name=remote_id)
+        except Exception as e:
+            raise click.ClickException(
+                f"Agent Runtime identity in {METADATA_FILE} could not be loaded: {e}"
+            ) from e
+        actual = agent.api_resource
+        if actual.name != remote_id or actual.display_name != display_name:
+            raise click.ClickException(
+                f"Agent Runtime identity in {METADATA_FILE} does not match "
+                "the deployed resource name or display name."
+            )
+        return [agent]
+
+    matching = [
+        agent
+        for agent in client.agent_engines.list()
+        if agent.api_resource.display_name == display_name
+    ]
+    if len(matching) > 1:
+        raise click.ClickException(
+            f"Multiple Agent Runtime resources use display name {display_name!r}; "
+            f"restore a valid {METADATA_FILE} or choose a unique --service-name."
+        )
+    return matching
 
 
 # agent_runtime switched from reasoning-engine introspection to a container
@@ -457,13 +537,12 @@ def deploy_agent_runtime(
     )
     vertexai.init(project=project, location=location)
 
-    # Check for existing agent
-    existing_agents = list(client.agent_engines.list())
-    matching_agents = [
-        agent
-        for agent in existing_agents
-        if agent.api_resource.display_name == display_name
-    ]
+    matching_agents = _select_agent_runtime(
+        client,
+        project=project,
+        location=location,
+        display_name=display_name,
+    )
 
     # Pre-existence flag must be computed before setup_agent_identity: that call
     # creates a bare identity agent (no deployment spec), but it's still a
@@ -662,10 +741,15 @@ def deploy_agent_runtime(
                 "update_mask": "spec.deployment_spec.secret_env",
             },
         )
-        _agent_engines_utils._await_operation(
+        completed_clear_op = _agent_engines_utils._await_operation(
             operation_name=clear_op.name,
             get_operation_fn=client.agent_engines._get_agent_operation,
         )
+        if completed_clear_op.error:
+            clear_operation()
+            raise click.ClickException(
+                f"Failed to clear Agent Runtime secrets: {completed_clear_op.error}"
+            )
 
     write_deployment_metadata(remote_agent, cfg)
     print_deployment_success(remote_agent, location, project, cfg)
