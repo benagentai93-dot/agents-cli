@@ -91,6 +91,12 @@ def ensure_server(
 
     if info:
         if _is_server_alive(info["pid"], info["port"]):
+            existing_session_mode = info.get("use_in_memory_session", True)
+            if existing_session_mode != use_in_memory_session:
+                raise click.ClickException(
+                    "The existing local server uses a different session mode.\n"
+                    "  Run 'agents-cli run --stop-server' first, then retry."
+                )
             # Check idle timeout — stop the server if it's been idle too long.
             if _is_idle(info, idle_timeout):
                 _cleanup(project_root, info)
@@ -119,7 +125,13 @@ def ensure_server(
         use_in_memory_session=use_in_memory_session,
     )
     _wait_for_port(project_root, port, pid=pid)
-    _write_pid_file(project_root, pid=pid, port=port, trace_to_cloud=trace_to_cloud)
+    _write_pid_file(
+        project_root,
+        pid=pid,
+        port=port,
+        trace_to_cloud=trace_to_cloud,
+        use_in_memory_session=use_in_memory_session,
+    )
     click.secho(f"Local server started on port {port} (PID {pid})", dim=True)
     click.secho("  Stop with: agents-cli run --stop-server", dim=True)
     return ServerInfo(port, started=True)
@@ -380,6 +392,7 @@ def _write_pid_file(
     pid: int,
     port: int,
     trace_to_cloud: bool = False,
+    use_in_memory_session: bool = True,
 ) -> None:
     now = datetime.now(UTC).isoformat()
     data = {
@@ -388,6 +401,7 @@ def _write_pid_file(
         "started_at": now,
         "last_activity": now,
         "trace_to_cloud": trace_to_cloud,
+        "use_in_memory_session": use_in_memory_session,
     }
     path = _pid_file_path(project_root)
     path.parent.mkdir(exist_ok=True)
