@@ -91,7 +91,7 @@ def _find_installed_skills() -> dict[str, str]:
         from google.agents.cli._runner import run_resolved
 
         proc = run_resolved(
-            ["npx", "-y", "skills", "list", "--json"],
+            ["npx", "-y", SKILLS_NPX_PACKAGE, "list", "--json"],
             capture_output=True,
             text=True,
             encoding="utf-8",
