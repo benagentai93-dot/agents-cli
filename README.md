@@ -76,7 +76,7 @@ See the [full tutorial](https://google.github.io/agents-cli/guide/quickstart-tut
 | Command | What it does |
 |---------|-------------|
 | `agents-cli setup` | Install CLI + skills to coding agents |
-| `agents-cli scaffold <name>` | Create a new agent project |
+| `agents-cli create <name>` | Create a new agent project |
 | `agents-cli eval generate` | Run agent on eval dataset, produce traces |
 | `agents-cli eval grade` | Run agent evaluations on the traces |
 | `agents-cli deploy` | Deploy to Google Cloud |
@@ -90,7 +90,7 @@ See the [full tutorial](https://google.github.io/agents-cli/guide/quickstart-tut
 | `agents-cli login` | Authenticate with Google Cloud or AI Studio |
 | `agents-cli login --status` | Show authentication status |
 | **Scaffold** | |
-| `agents-cli scaffold <name>` | Create a new agent project |
+| `agents-cli create <name>` | Create a new agent project |
 | `agents-cli scaffold enhance` | Add deployment, CI/CD, or RAG to an existing project |
 | `agents-cli scaffold upgrade` | Upgrade project to a newer agents-cli version |
 | **Develop** | |
