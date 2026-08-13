@@ -201,13 +201,13 @@ def check_skills_version() -> None:
     if _is_ci() or not _skills_check_is_due():
         return
 
+    _record_skills_check()
+
     installed = _find_installed_skills()
     if not installed:
         return
 
     from google.agents.cli import __version__
-
-    _record_skills_check()
 
     mismatched = {name: ver for name, ver in installed.items() if ver != __version__}
     if not mismatched:
