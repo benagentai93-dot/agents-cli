@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import functools
 import logging
 import os
 import pathlib
@@ -46,6 +47,23 @@ class AgentSelectionResult:
 
 # Export the shared decorator for use by other commands
 __all__ = ["create", "shared_template_options"]
+
+
+def _handle_create_errors(f: Callable) -> Callable:
+    """Convert create failures to Click's concise CLI errors."""
+
+    @functools.wraps(f)
+    def wrapper(*args, **kwargs):
+        try:
+            return f(*args, **kwargs)
+        except (click.ClickException, click.Abort):
+            raise
+        except ValueError as e:
+            raise click.UsageError(str(e)) from e
+        except Exception as e:
+            raise click.ClickException(str(e)) from e
+
+    return wrapper
 
 
 def shared_template_options(f: Callable) -> Callable:
@@ -266,6 +284,7 @@ def normalize_project_name(project_name: str) -> str:
     help="Quickstart mode: adk + agent_runtime + prototype, skips prompts",
     default=False,
 )
+@_handle_create_errors
 def create(
     ctx: click.Context,
     project_name: str,
@@ -343,11 +362,10 @@ def create(
 
     # Validate project name (for CLI-provided names)
     if len(project_name) > 26:
-        console.print(
-            f"Error: Project name '{project_name}' exceeds 26 characters. Please use a shorter name.",
-            style="bold red",
+        raise click.UsageError(
+            f"Project name '{project_name}' exceeds 26 characters. "
+            "Please use a shorter name."
         )
-        return
 
     project_name = normalize_project_name(project_name)
 
@@ -408,18 +426,14 @@ def create(
             )
         except click.Abort:
             console.print("✋ [red]Operation cancelled.[/red]")
-            return
+            raise
 
         console.print()
     else:
         # Check if project would exist in output directory
         project_path = destination_dir / project_name
         if project_path.exists():
-            console.print(
-                f"Error: Project directory '{project_path}' already exists",
-                style="bold red",
-            )
-            return
+            raise click.UsageError(f"Project directory '{project_path}' already exists")
 
     # Resolve agent name aliases (backwards compatibility)
     agent = template.resolve_agent_alias(agent)
@@ -516,7 +530,7 @@ def create(
                         else:
                             raise ValueError(f"Invalid agent number: {agent_num}")
                     except ValueError as err:
-                        raise ValueError(
+                        raise click.UsageError(
                             f"Invalid agent name or number: {agent}"
                         ) from err
 
@@ -600,15 +614,12 @@ def create(
             # Validate that the base template exists
             if not validate_base_template(base_template):
                 available_templates = get_available_base_templates()
-                console.print(
-                    f"Error: Base template '{base_template}' not found.",
-                    style="bold red",
+                if temp_dir_to_clean:
+                    shutil.rmtree(temp_dir_to_clean, ignore_errors=True)
+                raise click.UsageError(
+                    f"Base template '{base_template}' not found.\n"
+                    f"Available base templates: {', '.join(available_templates)}"
                 )
-                console.print(
-                    f"Available base templates: {', '.join(available_templates)}",
-                    style="yellow",
-                )
-                raise click.Abort()
             cli_overrides["base_template"] = template.resolve_agent_alias(base_template)
 
         # Load remote template config with CLI overrides
