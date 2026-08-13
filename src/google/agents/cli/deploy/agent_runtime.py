@@ -35,6 +35,7 @@ from google.cloud import resourcemanager_v3
 from google.iam.v1 import iam_policy_pb2, policy_pb2
 from vertexai._genai import _agent_engines_utils
 from vertexai._genai.types import AgentEngine, AgentEngineConfig, IdentityType
+from vertexai.agent_engines.templates.adk import AdkApp
 
 from google.agents.cli._agent_runtime_a2a import build_agent_runtime_a2a_card_url
 from google.agents.cli._gcp_project import get_gcp_project_number
@@ -356,6 +357,18 @@ def _select_agent_runtime(
     return matching
 
 
+def _adk_class_methods() -> list[Any]:
+    """Generate the standard ADK operation schemas shipped by the SDK."""
+    agent = object.__new__(AdkApp)
+    operations = _agent_engines_utils._get_registered_operations(agent=agent)
+    return [
+        _agent_engines_utils._to_dict(method)
+        for method in _agent_engines_utils._generate_class_methods_spec_or_raise(
+            agent=agent, operations=operations
+        )
+    ]
+
+
 # agent_runtime switched from reasoning-engine introspection to a container
 # build (which requires a Dockerfile) in this release. Projects scaffolded
 # before it never shipped a Dockerfile, so a missing one means the project
@@ -667,10 +680,11 @@ def deploy_agent_runtime(
         "resource_limits": {"cpu": cpu, "memory": memory}
         if (cpu is not None and memory is not None)
         else None,
+        "class_methods": _adk_class_methods(),
     }
 
-    # Agent Engine builds and serves the container over HTTP, so no entrypoint
-    # module or class-method spec is needed — just the image build config.
+    # Agent Engine builds and serves the container over HTTP. Standard ADK method
+    # schemas above tell the Console and SDK which operations that container serves.
     image_spec_dict: dict[str, Any] = {}
     build_args_dict = parse_key_value_pairs(build_args)
     if port:
