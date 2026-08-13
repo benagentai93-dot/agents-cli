@@ -319,6 +319,28 @@ def test_write_deployment_metadata_replace_failure_preserves_old_bytes(
     assert path.read_bytes() == old
 
 
+def test_clear_operation_preserves_metadata_written_while_pending(
+    monkeypatch, tmp_path
+) -> None:
+    path = tmp_path.joinpath("deployment_metadata.json")
+    original = {"remote_agent_runtime_id": RESOURCE_NAME}
+    path.write_text(json.dumps(original), encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    _operation.write_operation(
+        f"{RESOURCE_NAME}/operations/create",
+        "sample-project",
+        LOCATION,
+        "agent_runtime",
+    )
+    current = json.loads(path.read_text())
+    current["some_other_writer"] = "keep"
+    _operation.write_metadata(current)
+
+    _operation.clear_operation()
+
+    assert json.loads(path.read_text()) == {**original, "some_other_writer": "keep"}
+
+
 def test_failed_deployment_restores_previous_metadata_bytes(
     monkeypatch, tmp_path
 ) -> None:

@@ -138,15 +138,20 @@ def clear_operation() -> None:
     if not isinstance(pending, dict):
         return
     previous = pending.get(_PREVIOUS_METADATA)
-    if isinstance(previous, dict) and isinstance(previous.get("existed"), bool):
-        if previous["existed"]:
-            try:
-                content = base64.b64decode(previous.get("content", ""), validate=True)
-            except (ValueError, TypeError) as e:
-                raise ValueError("Invalid previous deployment metadata") from e
-            _replace_metadata_bytes(content)
-        else:
-            os.unlink(METADATA_FILE)
-        return
     del data["pending_operation"]
-    write_metadata(data)
+    if isinstance(previous, dict) and isinstance(previous.get("existed"), bool):
+        try:
+            content = base64.b64decode(previous.get("content", ""), validate=True)
+            previous_data = json.loads(content) if content else {}
+        except (json.JSONDecodeError, ValueError, TypeError):
+            previous_data = None
+        if previous["existed"] and data == previous_data:
+            _replace_metadata_bytes(content)
+            return
+        if not previous["existed"] and not data:
+            os.unlink(METADATA_FILE)
+            return
+    if data:
+        write_metadata(data)
+    else:
+        os.unlink(METADATA_FILE)
