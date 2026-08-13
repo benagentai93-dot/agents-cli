@@ -46,3 +46,24 @@ def test_readme_uses_the_create_command() -> None:
     assert readme.count("`agents-cli create <name>`") == 2
     assert "`agents-cli scaffold <name>`" not in readme
 
+
+def test_migration_guide_uses_safe_ordered_commands() -> None:
+    guide = MIGRATION_GUIDE.read_text(encoding="utf-8")
+    steps = (
+        "1. `agents-cli info` reads the current configuration without changing it.",
+        "2. `agents-cli scaffold upgrade --dry-run` previews the migration.",
+        "3. `agents-cli scaffold upgrade` applies the migration.",
+    )
+
+    info_help = CliRunner().invoke(main, ["info", "--help"])
+    upgrade_help = CliRunner().invoke(main, ["scaffold", "upgrade", "--help"])
+
+    assert info_help.exit_code == 0, info_help.output
+    assert upgrade_help.exit_code == 0, upgrade_help.output
+    assert "--dry-run" in upgrade_help.output
+    assert all(step in guide for step in steps)
+    assert [guide.index(step) for step in steps] == sorted(
+        guide.index(step) for step in steps
+    )
+    assert "sed -i ''" not in guide
+

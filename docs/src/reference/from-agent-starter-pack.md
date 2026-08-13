@@ -68,19 +68,20 @@ uvx google-agents-cli setup
 
 **Step 2: Rename the config section**
 
-```bash
-sed -i '' 's/tool.agent-starter-pack/tool.agents-cli/g' pyproject.toml
-```
+Open `pyproject.toml` in your editor and rename only these section headers:
 
-The next time config is read, it will trigger a migration to `agents-cli-manifest.yaml` and remove the `tool.agents-cli` section from `pyproject.toml`.
+- `[tool.agent-starter-pack]` to `[tool.agents-cli]`
+- `[tool.agent-starter-pack.create_params]` to `[tool.agents-cli.create_params]`
 
-**Step 3: Verify**
+**Step 3: Preview and apply the migration**
 
-```bash
-agents-cli info
-```
+1. `agents-cli info` reads the current configuration without changing it.
+2. `agents-cli scaffold upgrade --dry-run` previews the migration.
+3. `agents-cli scaffold upgrade` applies the migration.
 
-This shows your project config and confirms agents-cli can read it. Your agent code, tests, Terraform, and CI/CD pipelines all work as before.
+The final command writes `agents-cli-manifest.yaml` and removes the legacy
+`tool.agents-cli` section from `pyproject.toml`. Your agent code, tests,
+Terraform, and CI/CD pipelines continue to work as before.
 
 !!! note "Existing eval cases under `tests/eval/evalsets/`?"
     ASP's default agent template shipped a `basic.evalset.json` using the ADK `EvalSet` schema. The eval surface in agents-cli reads a different format from `tests/eval/datasets/`. See [Migrating Eval Datasets](eval-dataset-migration.md) for the conversion.
